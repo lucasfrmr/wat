@@ -1,0 +1,13 @@
+{
+  "name": "whatsapp-test",
+  "version": "1.0.0",
+  "description": "Quick WhatsApp Web.js Chat Lister",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "whatsapp-web.js": "^1.23.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
