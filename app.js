@@ -1,10 +1,5 @@
-// app.js
-
-'use strict';
-
-const { Client }     = require('whatsapp-web.js');
+const { Client, LocalAuth }     = require('whatsapp-web.js');
 const qrcode         = require('qrcode-terminal');
-const fetch          = require('node-fetch');  // v2.x
 
 // === CONFIG ===
 // Hardcoded chat IDs to avoid ambiguity and duplication
@@ -13,6 +8,7 @@ const POST_CHAT_ID   = "120363417869857840@g.us";
 // ================
 
 const client = new Client({
+  authStrategy: new LocalAuth(), // <-- Add this line
   puppeteer: {
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   }
@@ -29,25 +25,36 @@ client.on('ready', async () => {
   console.log('✅ Client is ready!');
   console.log(`[DEBUG] Using hardcoded chat IDs: source=${SOURCE_CHAT_ID}, post=${POST_CHAT_ID}`);
 
-  // Initial sync: translate & repost the very last message
+  // List all chats and their IDs
   try {
-    console.log('[DEBUG] Fetching last message from source group…');
-    const sourceChat = await client.getChatById(SOURCE_CHAT_ID);
-    const msgs       = await sourceChat.fetchMessages({ limit: 1 });
-    if (msgs.length) {
-      const last = msgs[0];
-      if (last.body) {
-        const translated = await translateToEnglish(last.body);
-        const target     = await client.getChatById(POST_CHAT_ID);
-        // Format with both original and translated text
-        const formattedMessage = `🌐 [${last._data.notifyName}]:\n\n🇪🇸 ${last.body}\n\n🇺🇸 ${translated}`;
-        await target.sendMessage(formattedMessage);
-        console.log('✅ [Initial repost] done');
-      }
-    }
+    const chats = await client.getChats();
+    console.log('📋 List of all chats:');
+    chats.forEach(chat => {
+      console.log(`- ${chat.name || chat.formattedTitle || chat.id.user || chat.id._serialized}: ${chat.id._serialized}`);
+    });
   } catch (err) {
-    console.error('⚠️ Initial sync error:', err);
+    console.error('⚠️ Error fetching chats:', err);
   }
+
+  // Initial sync: translate & repost the very last message
+  // try {
+  //   console.log('[DEBUG] Fetching last message from source group…');
+  //   const sourceChat = await client.getChatById(SOURCE_CHAT_ID);
+  //   const msgs       = await sourceChat.fetchMessages({ limit: 0 });
+  //   if (msgs.length) {
+  //     const last = msgs[0];
+  //     if (last.body) {
+  //       const translated = await translateToEnglish(last.body);
+  //       const target     = await client.getChatById(POST_CHAT_ID);
+  //       // Format with both original and translated text
+  //       const formattedMessage = `🌐 [${last._data.notifyName}]:\n\n🇪🇸 ${last.body}\n\n🇺🇸 ${translated}`;
+  //       await target.sendMessage(formattedMessage);
+  //       console.log('✅ [Initial repost] done');
+  //     }
+  //   }
+  // } catch (err) {
+  //   console.error('⚠️ Initial sync error:', err);
+  // }
 });
 
 // 3) On every new message…
