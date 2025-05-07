@@ -1,98 +1,135 @@
-const { Client, LocalAuth }     = require('whatsapp-web.js');
-const qrcode         = require('qrcode-terminal');
+const { Client, LocalAuth } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
 
 // === CONFIG ===
-// Hardcoded chat IDs to avoid ambiguity and duplication
-const SOURCE_CHAT_ID = "15129217431-1500313387@g.us";
+const SOURCE_CHAT_ID = "120363401637851953@g.us";
 const POST_CHAT_ID   = "120363417869857840@g.us";
-// ================
 
+// Initialize client
 const client = new Client({
-  authStrategy: new LocalAuth(), // <-- Add this line
-  puppeteer: {
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  }
+  authStrategy: new LocalAuth(),
+  puppeteer: { args: ['--no-sandbox','--disable-setuid-sandbox'] }
 });
 
 // 1) QR code for login
 client.on('qr', qr => {
-  console.log('🔍 Scan this QR code with WhatsApp on your phone:');
+  console.log('🔍 Scan this QR code:');
   qrcode.generate(qr, { small: true });
 });
 
-// 2) Once logged in…
-client.on('ready', async () => {
-  console.log('✅ Client is ready!');
-  console.log(`[DEBUG] Using hardcoded chat IDs: source=${SOURCE_CHAT_ID}, post=${POST_CHAT_ID}`);
-
-  // List all chats and their IDs
-  try {
-    const chats = await client.getChats();
-    console.log('📋 List of all chats:');
-    chats.forEach(chat => {
-      console.log(`- ${chat.name || chat.formattedTitle || chat.id.user || chat.id._serialized}: ${chat.id._serialized}`);
-    });
-  } catch (err) {
-    console.error('⚠️ Error fetching chats:', err);
-  }
-
-  // Initial sync: translate & repost the very last message
-  // try {
-  //   console.log('[DEBUG] Fetching last message from source group…');
-  //   const sourceChat = await client.getChatById(SOURCE_CHAT_ID);
-  //   const msgs       = await sourceChat.fetchMessages({ limit: 0 });
-  //   if (msgs.length) {
-  //     const last = msgs[0];
-  //     if (last.body) {
-  //       const translated = await translateToEnglish(last.body);
-  //       const target     = await client.getChatById(POST_CHAT_ID);
-  //       // Format with both original and translated text
-  //       const formattedMessage = `🌐 [${last._data.notifyName}]:\n\n🇪🇸 ${last.body}\n\n🇺🇸 ${translated}`;
-  //       await target.sendMessage(formattedMessage);
-  //       console.log('✅ [Initial repost] done');
-  //     }
-  //   }
-  // } catch (err) {
-  //   console.error('⚠️ Initial sync error:', err);
-  // }
+// 2) Ready event
+client.on('ready', () => {
+  console.log('✅ Client ready—listening for new messages in your source group.');
 });
 
-// 3) On every new message…
-client.on('message', async msg => {
-  if (msg.from !== SOURCE_CHAT_ID || !msg.body) return;
-  console.log(`\n📩 [SRC] ${msg._data.notifyName}: ${msg.body}`);
+// // 3) message_create fires once for each new incoming message (and your own)
+// client.on('message_create', async msg => {
+//   // 3a) Skip messages sent by the bot itself
+//   if (msg.fromMe) return;
 
-  try {
-    console.log('[DEBUG] Translating…');
-    const en = await translateToEnglish(msg.body);
-    console.log(`[DEBUG] Original: "${msg.body}"`);
-    console.log(`[DEBUG] Translated: "${en}"`);
-    const tgt = await client.getChatById(POST_CHAT_ID);
-    // Format with both original and translated text
-    const formattedMessage = `🌐 [${msg._data.notifyName}]:\n\n🇪🇸 ${msg.body}\n\n🇺🇸 ${en}`;
-    await tgt.sendMessage(formattedMessage);
-    console.log(`✅ [EN ] ${en}`);
-  } catch (err) {
-    console.error('⚠️ Translation/post error:', err);
+//   // 3b) Only care about messages *to* the source group
+//   if (msg.to !== SOURCE_CHAT_ID) {
+//     return;
+//   }
+
+//   console.log(`📩 Received in SOURCE: ${msg.body || '[MEDIA]'}`);
+
+//   // 3c) Detect Spanish
+//   const text = msg.body || '';
+//   const isSpanish = text.trim() && await detectSpanish(text);
+
+//   let translation = '';
+//   if (isSpanish) {
+//     translation = await translateToEnglish(text);
+//     console.log(`🌐 Translated: ${translation}`);
+//   }
+
+//   // 3d) Get the target chat and forward
+//   const target = await client.getChatById(POST_CHAT_ID);
+
+//   if (msg.hasMedia) {
+//     const media = await msg.downloadMedia();
+//     if (media) {
+//       const caption = translation ? `🇺🇸 ${translation}` : undefined;
+//       try {
+//         await target.sendMessage(media, { caption });
+//         console.log('✅ Forwarded media + caption');
+//       } catch (err) {
+//         console.warn('⚠️ Media forward failed, sending caption only');
+//         if (caption) await target.sendMessage(caption);
+//       }
+//     }
+//   } else if (translation) {
+//     await target.sendMessage(`🌐 [Translated from Spanish]:\n\n${translation}`);
+//     console.log('✅ Forwarded translated text');
+//   } else {
+//     console.log('⏭️ Not Spanish, no media → skipped.');
+//   }
+// });
+
+client.on('message_create', async msg => {
+  // Temporarily allow processing of messages sent by the bot itself:
+  // if (msg.fromMe) return;
+
+  // Only care about messages to the source group:
+  if (msg.to !== SOURCE_CHAT_ID) {
+    return;
+  }
+
+  console.log(`📩 Received in SOURCE: ${msg.body || '[MEDIA]'}`);
+
+  // Detect Spanish
+  const text = msg.body || '';
+  const isSpanish = text.trim() && await detectSpanish(text);
+
+  let translation = '';
+  if (isSpanish) {
+    translation = await translateToEnglish(text);
+    console.log(`🌐 Translated: ${translation}`);
+  }
+
+  const target = await client.getChatById(POST_CHAT_ID);
+
+  if (msg.hasMedia) {
+    const media = await msg.downloadMedia();
+    if (media) {
+      const caption = translation ? `🇺🇸 ${translation}` : undefined;
+      try {
+        await target.sendMessage(media, { caption });
+        console.log('✅ Forwarded media + caption');
+      } catch (err) {
+        console.warn('⚠️ Media forward failed, sending caption only');
+        if (caption) await target.sendMessage(caption);
+      }
+    }
+  } else if (translation) {
+    await target.sendMessage(`🌐 [Translated from Spanish]:\n\n${translation}`);
+    console.log('✅ Forwarded translated text');
+  } else {
+    console.log('⏭️ Not Spanish, no media → skipped.');
   }
 });
 
-// 4) Helpers & event-handlers
-client.on('auth_failure',   msg => console.error('🔒 Auth failure:', msg));
-client.on('disconnected',   reason => console.log('🔌 Disconnected:', reason));
 
-async function translateToEnglish(text) {
-  const params = new URLSearchParams({
-    client: 'gtx',
-    sl:     'auto',
-    tl:     'en',
-    dt:     't',
-    q:      text
-  });
-  const res  = await fetch(`https://translate.googleapis.com/translate_a/single?${params}`);
-  const data = await res.json();
-  return data[0].map(seg => seg[0]).join('');
+// ——— Translation Helpers ———
+async function detectSpanish(text) {
+  const p = new URLSearchParams({ client:'gtx', sl:'auto', tl:'es', dt:'t', q:text });
+  const r = await fetch(`https://translate.googleapis.com/translate_a/single?${p}`);
+  const d = await r.json();
+  console.log(`   → Detected language: ${d[2]}`);
+  return d[2] === 'es';
 }
 
-// 5) Start the client
+async function translateToEnglish(text) {
+  const p = new URLSearchParams({ client:'gtx', sl:'es', tl:'en', dt:'t', q:text });
+  const r = await fetch(`https://translate.googleapis.com/translate_a/single?${p}`);
+  const d = await r.json();
+  return d[0].map(seg => seg[0]).join('');
+}
+
+// 4) Auth/disconnect handlers
+client.on('auth_failure', e => console.error('🔒 Auth failure:', e));
+client.on('disconnected', r => console.log('🔌 Disconnected:', r));
+
+// 5) Start everything
 client.initialize();
