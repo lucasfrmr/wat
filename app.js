@@ -1,9 +1,13 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const fs = require('fs');
+const path = require('path');
+const readline = require('readline');
 
 // === CONFIG ===
-const SOURCE_CHAT_ID = "15129217431-1500313387@g.us";
-const POST_CHAT_ID   = "120363417869857840@g.us";
+const CHAT_CONFIG_PATH = path.join(__dirname, 'chat-config.json');
+let SOURCE_CHAT_ID = "";
+let POST_CHAT_ID   = "";
 
 // === FILTER CONFIGURATION ===
 const FILTER_CONFIG = {
@@ -39,9 +43,62 @@ const FILTER_CONFIG = {
 // ================
 
 const client = new Client({
-  authStrategy: new LocalAuth(),
+  authStrategy: new LocalAuth({ dataPath: path.join(__dirname, 'auth') }),
   puppeteer: { args: ['--no-sandbox', '--disable-setuid-sandbox'] }
 });
+
+function loadChatConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(CHAT_CONFIG_PATH, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function saveChatConfig(cfg) {
+  fs.writeFileSync(CHAT_CONFIG_PATH, JSON.stringify(cfg, null, 2));
+}
+
+function prompt(question) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => rl.question(question, ans => { rl.close(); resolve(ans.trim()); }));
+}
+
+async function pickChatsInteractively() {
+  const chats = await client.getChats();
+  const groups = chats
+    .filter(c => c.isGroup)
+    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+    .slice(0, 10);
+
+  if (groups.length === 0) {
+    throw new Error('No group chats found');
+  }
+
+  console.log('\n📋 Top 10 most active group chats:');
+  groups.forEach((c, i) => {
+    const name = c.name || c.formattedTitle || c.id._serialized;
+    console.log(`  ${i + 1}. ${name}`);
+  });
+
+  const srcIdx = parseInt(await prompt('\nEnter # for SOURCE chat: '), 10) - 1;
+  const tgtIdx = parseInt(await prompt('Enter # for TARGET (translated) chat: '), 10) - 1;
+
+  if (Number.isNaN(srcIdx) || srcIdx < 0 || srcIdx >= groups.length ||
+      Number.isNaN(tgtIdx) || tgtIdx < 0 || tgtIdx >= groups.length) {
+    throw new Error('Invalid selection');
+  }
+
+  const cfg = {
+    sourceChatId: groups[srcIdx].id._serialized,
+    sourceChatName: groups[srcIdx].name || groups[srcIdx].formattedTitle,
+    postChatId: groups[tgtIdx].id._serialized,
+    postChatName: groups[tgtIdx].name || groups[tgtIdx].formattedTitle,
+  };
+  saveChatConfig(cfg);
+  console.log(`\n💾 Saved selection to ${CHAT_CONFIG_PATH} (delete this file to re-pick)`);
+  return cfg;
+}
 
 // 1) QR code for login
 client.on('qr', qr => {
@@ -52,41 +109,27 @@ client.on('qr', qr => {
 // 2) Once logged in…
 client.on('ready', async () => {
   console.log('✅ Client is ready!');
-  console.log(`[DEBUG] Using hardcoded chat IDs: source=${SOURCE_CHAT_ID}, post=${POST_CHAT_ID}`);
 
   try {
-    const chats = await client.getChats();
-    console.log('📋 List of all chats:');
-    chats.forEach(chat => {
-      console.log(`- ${chat.name || chat.formattedTitle || chat.id.user || chat.id._serialized}: ${chat.id._serialized}`);
-      
-      // Check if this is our source chat and log it prominently
-      if (chat.id._serialized === SOURCE_CHAT_ID) {
-        console.log(`🔔 FOUND SOURCE CHAT: ${chat.name || chat.formattedTitle} (${chat.id._serialized})`);
-      }
-      
-      // Check if this is our post chat and log it prominently
-      if (chat.id._serialized === POST_CHAT_ID) {
-        console.log(`🔔 FOUND POST CHAT: ${chat.name || chat.formattedTitle} (${chat.id._serialized})`);
-      }
-    });
-    
-    // Verify we can get the chats by ID
-    try {
-      const sourceChat = await client.getChatById(SOURCE_CHAT_ID);
-      const postChat = await client.getChatById(POST_CHAT_ID);
-      console.log(`✅ Successfully got source chat: ${sourceChat.name || sourceChat.formattedTitle}`);
-      console.log(`✅ Successfully got post chat: ${postChat.name || postChat.formattedTitle}`);
-      
-      // Skip historical messages and only process new ones going forward
-      console.log('✅ Bot is now active and listening for new messages');
-      console.log('✅ Only mirroring new messages from now on - skipping historical message processing');
-    } catch (err) {
-      console.error('⚠️ Error accessing chats by ID:', err);
-      console.log('⚠️ Please check if the chat IDs are correct in the CONFIG section');
+    let cfg = loadChatConfig();
+    if (cfg && cfg.sourceChatId && cfg.postChatId) {
+      console.log(`📂 Loaded saved chats from ${CHAT_CONFIG_PATH}`);
+      console.log(`   SOURCE: ${cfg.sourceChatName || cfg.sourceChatId}`);
+      console.log(`   TARGET: ${cfg.postChatName || cfg.postChatId}`);
+    } else {
+      cfg = await pickChatsInteractively();
     }
+
+    SOURCE_CHAT_ID = cfg.sourceChatId;
+    POST_CHAT_ID = cfg.postChatId;
+
+    const sourceChat = await client.getChatById(SOURCE_CHAT_ID);
+    const postChat = await client.getChatById(POST_CHAT_ID);
+    console.log(`✅ Source chat ready: ${sourceChat.name || sourceChat.formattedTitle}`);
+    console.log(`✅ Target chat ready: ${postChat.name || postChat.formattedTitle}`);
+    console.log('✅ Bot is now active and listening for new messages');
   } catch (err) {
-    console.error('⚠️ Error fetching chats:', err);
+    console.error('⚠️ Error during chat setup:', err);
   }
 });
 
